@@ -1,0 +1,99 @@
+/* ===========================
+   espnService.js — Cliente ESPN
+   Corre en el servidor, sin problema de CORS
+   =========================== */
+
+const fetch = require('node-fetch');
+
+const BASE = 'https://site.api.espn.com/apis/site/v2/sports/soccer';
+const WC   = 'fifa.world';
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+async function fetchJSON(url) {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      'Accept': 'application/json',
+      'Referer': 'https://www.espn.com/',
+    },
+    timeout: 10000,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} en ${url}`);
+  return res.json();
+}
+
+/* ---- Scoreboard: pide siempre el rango completo del torneo.
+   Esto trae TODOS los partidos (jugados, en vivo, futuros) sin
+   depender de coincidencias de zona horaria con "hoy". ---- */
+async function getScoreboard() {
+  const urls = [
+    // Rango completo Mundial 2026 (grupos + eliminatorias)
+    `${BASE}/${WC}/scoreboard?limit=300&dates=20260611-20260719`,
+    // Fallback: solo hoy, por si el rango falla
+    `${BASE}/${WC}/scoreboard?dates=${todayStr()}&limit=50`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const data = await fetchJSON(url);
+      if (data?.events?.length > 0) return data;
+    } catch (e) {
+      console.warn('[ESPN] scoreboard fallo:', e.message);
+    }
+  }
+  return null;
+}
+
+/* ---- Standings ----
+   IMPORTANTE: el endpoint /apis/site/v2/.../standings devuelve vacío {}
+   para fútbol. El endpoint correcto es /apis/v2/ (sin "site"). */
+async function getStandings() {
+  const urls = [
+    `https://site.api.espn.com/apis/v2/sports/soccer/${WC}/standings`,
+    `https://site.web.api.espn.com/apis/v2/sports/soccer/${WC}/standings`,
+  ];
+  for (const url of urls) {
+    try {
+      const data = await fetchJSON(url);
+      if (data?.standings) return data;
+    } catch (e) {
+      console.warn('[ESPN] standings fallo:', e.message);
+    }
+  }
+  return null;
+}
+
+/* ---- Noticias: español primero, inglés como fallback ---- */
+async function getNews() {
+  const urls = [
+    `https://site.api.espn.com/apis/site/v2/sports/soccer/${WC}/news?limit=10&lang=es&region=ec`,
+    `${BASE}/${WC}/news?limit=10`,
+  ];
+  for (const url of urls) {
+    try {
+      const data = await fetchJSON(url);
+      if (data?.articles?.length > 0) return data;
+    } catch (e) {
+      console.warn('[ESPN] news fallo:', e.message);
+    }
+  }
+  return null;
+}
+
+/* ---- Detalle de un partido específico: trae eventos de gol con
+   nombre de jugador y minuto exacto. Se usa solo para partidos en vivo,
+   para no saturar la API con 100+ llamadas innecesarias. ---- */
+async function getMatchSummary(eventId) {
+  const url = `${BASE}/${WC}/summary?event=${eventId}`;
+  try {
+    return await fetchJSON(url);
+  } catch (e) {
+    console.warn(`[ESPN] summary fallo para evento ${eventId}:`, e.message);
+    return null;
+  }
+}
+
+module.exports = { getScoreboard, getStandings, getNews, getMatchSummary };
