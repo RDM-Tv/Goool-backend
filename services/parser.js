@@ -145,4 +145,77 @@ function parseNews(data) {
   }));
 }
 
-module.exports = { parseMatches, parseStandings, parseNews, countryFlag };
+/* ---- Parsea el formato de openfootball (fuente secundaria/respaldo) ----
+   Entrada: [{ round, date, time, team1, team2, score: { ft: [h,a] } }]
+   Se usa solo cuando ESPN no trae nada, como red de seguridad. */
+function parseOpenFootballMatches(rawMatches) {
+  if (!Array.isArray(rawMatches)) return [];
+
+  const now = new Date();
+
+  return rawMatches.map((m, idx) => {
+    const hasScore = Array.isArray(m.score?.ft);
+    const hasPenalties = Array.isArray(m.score?.p);
+
+    // El campo "time" viene como "16:30 UTC-4" — extraemos solo HH:MM
+    const timeOnly = (m.time || '').match(/^(\d{1,2}:\d{2})/)?.[1];
+    const dateTimeStr = timeOnly ? `${m.date}T${timeOnly}:00` : `${m.date}T00:00:00`;
+    let matchDate = new Date(dateTimeStr);
+    if (isNaN(matchDate.getTime())) matchDate = new Date(`${m.date}T00:00:00`);
+
+    // Sin un feed de "en vivo" real, inferimos estado por fecha + si tiene marcador
+    let status = 'pre';
+    if (hasScore) {
+      status = 'post';
+    } else if (!isNaN(matchDate.getTime()) && matchDate < now) {
+      const hoursSince = (now - matchDate) / 3600000;
+      status = hoursSince < 3 ? 'in' : 'pre'; // margen de 3h para partido típico
+    }
+
+    const home = (m.team1 || '').replace(/\s*\([A-Z]{3}\)$/, '');
+    const away = (m.team2 || '').replace(/\s*\([A-Z]{3}\)$/, '');
+
+    // Si hubo penales, el "ganador real" y el marcador a mostrar usan la definición por penales
+    const homeFt = hasScore ? m.score.ft[0] : null;
+    const awayFt = hasScore ? m.score.ft[1] : null;
+    let homeWinner = hasScore ? homeFt > awayFt : false;
+    let awayWinner = hasScore ? awayFt > homeFt : false;
+    let statusShort = hasScore ? 'FT' : (timeOnly || '');
+
+    if (hasPenalties) {
+      homeWinner = m.score.p[0] > m.score.p[1];
+      awayWinner = m.score.p[1] > m.score.p[0];
+      statusShort = `FT (${m.score.p[0]}-${m.score.p[1]} pen)`;
+    }
+
+    // Slug de grupo/fase: solo traducimos si reconocemos el patrón;
+    // en fase de grupos, ESPN/frontend no necesitan el "matchday", se omite.
+    const roundSlug = (m.round || '').toLowerCase().replace(/\s+/g, '-');
+    const groupLabel = /round-of|quarter|semi|final|third-place/.test(roundSlug)
+      ? translateGroup(roundSlug)
+      : (m.group ? `Grupo ${m.group.replace(/^Group\s*/i, '')}` : '');
+
+    return {
+      id:          `of-${idx}-${m.date}`,
+      name:        `${home} vs ${away}`,
+      date:        isNaN(matchDate.getTime()) ? new Date().toISOString() : matchDate.toISOString(),
+      status,
+      statusShort,
+      clock:       '',
+      period:      0,
+      venue:       m.ground || '',
+      city:        m.ground || '',
+      group:       groupLabel,
+      home: {
+        id: null, name: home, flag: countryFlag(home),
+        score: homeFt, winner: homeWinner,
+      },
+      away: {
+        id: null, name: away, flag: countryFlag(away),
+        score: awayFt, winner: awayWinner,
+      },
+    };
+  });
+}
+
+module.exports = { parseMatches, parseStandings, parseNews, parseOpenFootballMatches, countryFlag };
