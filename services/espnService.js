@@ -25,12 +25,15 @@ async function fetchJSON(url) {
   return res.json();
 }
 
-/* ---- Scoreboard: intenta hoy primero, luego rango completo del Mundial ---- */
+/* ---- Scoreboard: pide siempre el rango completo del torneo.
+   Esto trae TODOS los partidos (jugados, en vivo, futuros) sin
+   depender de coincidencias de zona horaria con "hoy". ---- */
 async function getScoreboard() {
-  const today = todayStr();
   const urls = [
-    `${BASE}/${WC}/scoreboard?dates=${today}&limit=50`,
-    `${BASE}/${WC}/scoreboard?limit=200&dates=20260611-20260719`,
+    // Rango completo Mundial 2026 (grupos + eliminatorias)
+    `${BASE}/${WC}/scoreboard?limit=300&dates=20260611-20260719`,
+    // Fallback: solo hoy, por si el rango falla
+    `${BASE}/${WC}/scoreboard?dates=${todayStr()}&limit=50`,
   ];
 
   for (const url of urls) {
